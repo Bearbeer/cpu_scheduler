@@ -10,41 +10,89 @@
 
 /* 최대 프로세스 개수 */
 #define MAX_PROCESS_CNT 20
-/* 프로세스 개수 */
-int process_cnt;
-
-/* process 구조체 선언 */
-typedef struct Process process;
-struct Process {
-  int pid, execution_time, cpu_burst_time, io_burst_time, arrival_time, priority, cpu_running_time, io_running_time, waiting_time, turnaround_time;
-};
+/* Process 큐 ID */
+#define PROCESS_QUEUE_ID 0
+/* Job 큐 ID */
+#define JOB_QUEUE_ID 1
+/* Ready 큐 ID */
+#define READY_QUEUE_ID 2
+/* Waiting 큐 ID */
+#define WAITING_QUEUE_ID 3
+/* Completed 큐 ID */
+#define COMPLETED_QUEUE_ID 4
 
 /* boolean 타입 선언 */
 typedef enum { false, true } bool;
 
 /* mode 명칭 */
 const char* mode_name[] = {"프로그램 종료", "FCFS", "Non-Preemptive SJF", "Preemptive SJB", "Non-Preemptive Priority", "Preemptive Priority", "Round Robin", "처음으로.."};
+/* 이미 선택했던 모드 Array */
+int chosen_mode[6];
 
-/* 함수 선언부 */
-void print_queue(int queue_id);
-
-/* -- 큐 관리 -- */
-/* Processes to eval queue */
-#define PROCESS_QUEUE_ID 0
-/* Job queue */
-#define JOB_QUEUE_ID 1
-/* Ready queue */
-#define READY_QUEUE_ID 2
-/* Waiting queue */
-#define WAITING_QUEUE_ID 3
-/* Completed queue */
-#define COMPLETED_QUEUE_ID 4
+/* process 구조체 선언 */
+typedef struct Process process;
+struct Process {
+  int pid, execution_time, cpu_burst_time, io_burst_time, arrival_time, priority, cpu_running_time, io_running_time, waiting_time, turnaround_time;
+};
+/* 프로세스 개수 */
+int process_cnt;
 
 /* 큐 Array 선언 */
 const char* queue_name[] = {"Process", "Job", "Ready", "Waiting", "Completed"};
 int queue_size[5] = {0, 0, 0, 0, 0};
 process *queue[5][MAX_PROCESS_CNT];
 
+/* 스케줄링 시작 시간 */
+int scheduling_start;
+/* 스케줄링 종료 시간 */
+int scheduling_end;
+/* 현재 CPU에서 running 상태인 프로세스 */
+process *running_proc = NULL;
+/* running 프로세스가 running 상태가 된 시점부터 경과된 시간 */
+int running_proc_time = 0;
+/* cpu가 IDLE 상태였던 시간 */
+int idle_time = 0;
+
+/* evaluate 결과 구조체 선언 */
+typedef struct Result result;
+struct Result {
+  int mode;
+  float avg_waiting_time, avg_turnaround_time, cpu_utilization;
+};
+/* evaluation 결과 큐 선언 */
+result *result_queue[6];
+int result_size = 0;
+
+/* 함수 선언부 */
+/* -- 큐 관리 -- */
+void init_queue(int queue_id);
+int queue_index(int queue_id, int pid);
+bool already_in_queue(int queue_id, int pid);
+process *enqueue(int queue_id, process *proc);
+process *dequeue(int queue_id, process *proc);
+void flush_queue(int queue_id);
+void print_queue(int queue_id);
+void create_process(int pid);
+void sort_process_queue(void);
+void prepare_job_queue(void);
+void flush_result_queue(void);
+
+/* -- 스케줄링 알고리즘 -- */
+process *fcfs(void);
+process *sjf(bool preemptive);
+process *priority(bool preemptive);
+process *round_robin(int quantum);
+void schedule(int mode, int quantum);
+
+/* -- evaluate 및 결과 출력 -- */
+void evaluate(int mode, int quantum);
+void print_result(void);
+
+/* -- 코드 설정 관리 -- */
+bool already_chosen_mode(int mode);
+void config(void);
+
+/* -- 큐 관리 -- */
 /* 큐 initialize */
 void init_queue(int queue_id) {
   queue_size[queue_id] = 0;
@@ -114,6 +162,14 @@ void flush_queue(int queue_id) {
   queue_size[queue_id] = 0;
 }
 
+/* 큐 내의 프로세스 목록을 출력한다 */
+void print_queue(int queue_id) {
+  for(int i = 0; i < queue_size[queue_id]; i++){
+    process *proc = queue[queue_id][i];
+    printf("pid: %d | execution_time: %d | cpu_burst_time: %d | io_burst_time: %d | cpu_running_time: %d | io_running_time: %d |arrival_time: %d\n", proc->pid, proc->execution_time, proc->cpu_burst_time, proc->io_burst_time, proc->cpu_running_time, proc->io_running_time, proc->arrival_time);
+  }
+}
+
 /* 새로운 프로세스를 생성하여 Process 큐에 삽입한다. */
 void create_process(int pid) {
   process *temp = (process *)malloc(sizeof(process));
@@ -168,22 +224,16 @@ void prepare_job_queue() {
   }
 }
 
-/* 큐 내의 프로세스 목록을 출력한다 */
-void print_queue(int queue_id) {
-  for(int i = 0; i < queue_size[queue_id]; i++){
-    process *proc = queue[queue_id][i];
-    printf("pid: %d | execution_time: %d | cpu_burst_time: %d | io_burst_time: %d | cpu_running_time: %d | io_running_time: %d |arrival_time: %d\n", proc->pid, proc->execution_time, proc->cpu_burst_time, proc->io_burst_time, proc->cpu_running_time, proc->io_running_time, proc->arrival_time);
+/* 사용이 끝난 결과 큐를 플러시한다 */
+void flush_result_queue() {
+  for(int i = 0; i < result_size; i++) {
+    free(result_queue[i]);
+    result_queue[i] = NULL;
   }
+  result_size = 0;
 }
 
 /* -- 스케줄링 알고리즘 -- */
-/* 현재 CPU에서 running 상태인 프로세스 */
-process *running_proc = NULL;
-/* running 프로세스가 running 상태가 된 시점부터 경과된 시간 */
-int running_proc_time = 0;
-/* cpu가 IDLE 상태였던 시간 */
-int idle_time = 0;
-
 /* First Come First Served 알고리즘 */
 process *fcfs() {
   // 레디 큐가 비어있는 경우 현재 running 중인 프로세스 리턴
@@ -287,52 +337,6 @@ process *round_robin(int quantum) {
   // running 프로세스를 레디 큐에 넣고 레디 큐에 가장 먼저 들어온 프로세스를 dequeue해서 리턴
   enqueue(READY_QUEUE_ID, running_proc);
   return dequeue(READY_QUEUE_ID, first_proc);
-}
-
-/* -- CPU scheduling -- */
-/* 스케줄링 시작 시간 */
-int scheduling_start;
-/* 스케줄링 종료 시간 */
-int scheduling_end;
-
-/* evaluate 결과 구조체 선언 */
-typedef struct Result result;
-struct Result {
-  int mode;
-  float avg_waiting_time, avg_turnaround_time, cpu_utilization;
-};
-
-/* eval 결과 큐 선언 */
-result *result_queue[6];
-int result_size = 0;
-
-/* 사용이 끝난 결과 큐를 플러시한다 */
-void flush_result_queue() {
-  for(int i = 0; i < result_size; i++) {
-    free(result_queue[i]);
-    result_queue[i] = NULL;
-  }
-  result_size = 0;
-}
-
-/* 스케줄링 알고리즘 Evaluate */
-void evaluate(int mode, int quantum) {
-  float total_waiting = 0, total_turnaround = 0;
-  float cpu_utilized_time = scheduling_end - idle_time;
-  float total_time = scheduling_end - scheduling_start;
-  
-  for(int i = 0; i < queue_size[COMPLETED_QUEUE_ID]; i++) {
-    total_waiting += queue[COMPLETED_QUEUE_ID][i]->waiting_time;
-    total_turnaround += queue[COMPLETED_QUEUE_ID][i]->turnaround_time;
-  }
-  
-  result *eval_result = (result *)malloc(sizeof(result));
-  eval_result->mode = mode;
-  eval_result->avg_waiting_time = total_waiting/queue_size[COMPLETED_QUEUE_ID];
-  eval_result->avg_turnaround_time = total_turnaround/queue_size[COMPLETED_QUEUE_ID];
-  eval_result->cpu_utilization = cpu_utilized_time/total_time * 100;
-  result_queue[result_size] = eval_result;
-  result_size++;
 }
 
 /* 프로세스를 모드에 맞게 스케줄링한다 */
@@ -453,8 +457,34 @@ void schedule(int mode, int quantum) {
     flush_queue(i);
 }
 
-/* 이미 선택했던 모드 Array */
-int chosen_mode[6];
+/* -- Evaluate 및 결과 출력 -- */
+/* 스케줄링 알고리즘 Evaluation */
+void evaluate(int mode, int quantum) {
+  float total_waiting = 0, total_turnaround = 0;
+  float cpu_utilized_time = scheduling_end - idle_time;
+  float total_time = scheduling_end - scheduling_start;
+  
+  for(int i = 0; i < queue_size[COMPLETED_QUEUE_ID]; i++) {
+    total_waiting += queue[COMPLETED_QUEUE_ID][i]->waiting_time;
+    total_turnaround += queue[COMPLETED_QUEUE_ID][i]->turnaround_time;
+  }
+  
+  result *eval_result = (result *)malloc(sizeof(result));
+  eval_result->mode = mode;
+  eval_result->avg_waiting_time = total_waiting/queue_size[COMPLETED_QUEUE_ID];
+  eval_result->avg_turnaround_time = total_turnaround/queue_size[COMPLETED_QUEUE_ID];
+  eval_result->cpu_utilization = cpu_utilized_time/total_time * 100;
+  result_queue[result_size] = eval_result;
+  result_size++;
+}
+
+/* evaluation 결과 출력 */
+void print_result() {
+  for(int i = 0; i < result_size; i++)
+    printf("[%s] avg_waiting_time: %.2f | avg_turnaround_time: %.2f | cpu_utilization: %.2f\n", mode_name[result_queue[i]->mode], result_queue[i]->avg_waiting_time, result_queue[i]->avg_turnaround_time, result_queue[i]->cpu_utilization);
+}
+
+/* -- 코드 설정 관리 -- */
 /* 모드가 이미 선택된 모드인지 여부 */
 bool already_chosen_mode(int mode) {
   for(int i = 0; i < 6; i++)
@@ -463,7 +493,7 @@ bool already_chosen_mode(int mode) {
   return false;
 }
 
-/* CPU 스케줄링 전 설정 세팅 */
+/* CPU 스케줄링 설정 세팅 */
 void config() {
   printf("\n");
   
@@ -491,12 +521,6 @@ void config() {
   printf("Random Process Size: %d\n", queue_size[PROCESS_QUEUE_ID]);
   printf("Job queue (order by arrival_time asc): \n");
   print_queue(PROCESS_QUEUE_ID);
-}
-
-/* evaluation 결과 출력 */
-void print_result() {
-  for(int i = 0; i < result_size; i++)
-    printf("[%s] avg_waiting_time: %.2f | avg_turnaround_time: %.2f | cpu_utilization: %.2f\n", mode_name[result_queue[i]->mode], result_queue[i]->avg_waiting_time, result_queue[i]->avg_turnaround_time, result_queue[i]->cpu_utilization);
 }
 
 /* 메인 함수 */
