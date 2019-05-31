@@ -166,7 +166,7 @@ void flush_queue(int queue_id) {
 void print_queue(int queue_id) {
   for(int i = 0; i < queue_size[queue_id]; i++){
     process *proc = queue[queue_id][i];
-    printf("pid: %d | execution_time: %d | cpu_burst_time: %d | io_burst_time: %d | cpu_running_time: %d | io_running_time: %d |arrival_time: %d\n", proc->pid, proc->execution_time, proc->cpu_burst_time, proc->io_burst_time, proc->cpu_running_time, proc->io_running_time, proc->arrival_time);
+    printf("pid: %d | execution_time: %d | cpu_burst_time: %d | io_burst_time: %d | cpu_running_time: %d | io_running_time: %d |arrival_time: %d | priority: %d\n", proc->pid, proc->execution_time, proc->cpu_burst_time, proc->io_burst_time, proc->cpu_running_time, proc->io_running_time, proc->arrival_time, proc->priority);
   }
 }
 
